@@ -14,7 +14,13 @@ from datetime import datetime
 import torch
 from triton.testing import do_bench
 
-from gram_newton_schulz import StandardNewtonSchulz, GramNewtonSchulz, YOU_COEFFICIENTS
+from gram_newton_schulz import (
+    YOU_COEFFICIENTS,
+    GramNewtonSchulz,
+    StandardNewtonSchulz,
+)
+from gram_newton_schulz.ampere import GramNewtonSchulzAmpere, cutlass_is_installed
+
 
 def benchmark_ns_variant(callable_fn, X, warmup=5, repeats=30, desc=""):
     print(f"\n  {desc}")
@@ -92,11 +98,19 @@ def main():
     print("=" * 80)
 
     can_use_kernels = compute_capability >= 90
+    can_use_ampere = capability[0] == 8 and cutlass_is_installed()
 
     if can_use_kernels:
         print("Custom kernels available (H100/B200)")
+    elif can_use_ampere:
+        print("Ampere CUTLASS kernels available")
     else:
-        print(f"Custom kernels not available (requires SM90+, found SM{compute_capability})")
+        print(f"Custom kernels not available for SM{compute_capability}")
+        if capability[0] == 8:
+            print(
+                "Install the optional dependency with: "
+                "pip install '.[cutlass]' --no-build-isolation"
+            )
         print("Will only benchmark PyTorch implementations")
 
     torch_dtype = torch.bfloat16
@@ -174,6 +188,29 @@ def main():
     torch.cuda.synchronize()
     time.sleep(1.0)
 
+    timing_gram_ampere = None
+    if can_use_ampere:
+        print("\n[4] Gram Newton-Schulz (Ampere CUTLASS)")
+        gram_ampere = GramNewtonSchulzAmpere(
+            ns_epsilon=1e-7,
+            ns_coefficients=YOU_COEFFICIENTS,
+            gram_newton_schulz_reset_iterations=[2],
+        )
+
+        gram_ampere(X)
+        torch.cuda.synchronize()
+        time.sleep(1.0)
+
+        timing_gram_ampere = benchmark_ns_variant(
+            gram_ampere,
+            X,
+            warmup=args.warmup,
+            repeats=args.repeats,
+            desc="Gram Newton-Schulz (Ampere CUTLASS)",
+        )
+        torch.cuda.synchronize()
+        time.sleep(1.0)
+
     timing_gram_kernels = None
     if can_use_kernels:
         print("\n[4] Gram Newton-Schulz (Kernels)")
@@ -208,6 +245,8 @@ def main():
     if can_use_kernels:
         print(f"{'Standard Newton-Schulz (Kernels)':<50} | {timing_standard_kernels:12.3f}")
     print(f"{'Gram Newton-Schulz (PyTorch)':<50} | {timing_gram_torch:12.3f}")
+    if can_use_ampere:
+        print(f"{'Gram Newton-Schulz (Ampere CUTLASS)':<50} | {timing_gram_ampere:12.3f}")
     if can_use_kernels:
         print(f"{'Gram Newton-Schulz (Kernels)':<50} | {timing_gram_kernels:12.3f}")
 
@@ -243,6 +282,10 @@ def main():
 
             _ = gram_torch(X)
             torch.cuda.synchronize()
+
+            if can_use_ampere:
+                gram_ampere(X)
+                torch.cuda.synchronize()
 
             if can_use_kernels:
                 _ = gram_kernels(X)

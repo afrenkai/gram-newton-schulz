@@ -46,7 +46,7 @@ Instead of iterating on the expensive $X \in \mathbb{R}^{n \times m}$ matrix, Gr
 
 Requirements:
 
-- NVIDIA Hopper (H100) or Blackwell (B200/B300) GPU
+- NVIDIA Ampere (SM8X), Hopper (H100), or Blackwell (B200/B300) GPU
 - PyTorch 2.7.1+
 - CUDA 12.9+
 
@@ -63,6 +63,12 @@ This will install:
 - gram-newton-schulz (this package)
 - nvidia-cutlass-dsl 4.5.2
 - quack-kernels 0.5.0
+
+On Ampere, install the optional CUTLASS runtime as well:
+
+```bash
+pip install 'gram-newton-schulz[cutlass]' --no-build-isolation
+```
 
 ## Usage
 
@@ -89,6 +95,27 @@ python -m gram_newton_schulz.autotune_restarts --num-restarts 1 --coefs "4.0848,
 ```
 
 For 5 steps of Newton-Schulz, we recommend `num-restarts = 1` for maximum speed while maintaining numerical stability. However, users who experience numerical instability or use more than 5 steps should consider using more restarts.
+
+### Ampere
+
+Use the Ampere implementation on SM8X GPUs after installing the `cutlass` extra:
+
+```python
+from gram_newton_schulz import POLAR_EXPRESS_COEFFICIENTS
+from gram_newton_schulz.ampere import GramNewtonSchulzAmpere
+
+ampere_gram_NS = GramNewtonSchulzAmpere(
+    ns_coefficients=POLAR_EXPRESS_COEFFICIENTS,
+    gram_newton_schulz_reset_iterations=[2],
+)
+result = ampere_gram_NS(X)
+```
+
+The Ampere backend uses CUTLASS for specific square and symmetric products. It
+keeps rectangular products on PyTorch/cuBLAS.
+
+torch.compile is WIP
+
 
 ### Muon
 
