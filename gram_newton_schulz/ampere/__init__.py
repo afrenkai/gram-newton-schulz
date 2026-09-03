@@ -1,2 +1,1 @@
-from .gns_cutlass_ampere import cutlass_is_installed as cutlass_is_installed
 from .gram_newton_schulz_ampere import GramNewtonSchulzAmpere as GramNewtonSchulzAmpere

@@ -7,7 +7,7 @@ from ..gram_newton_schulz import (
     _make_compiled_gram,
     _make_compiled_standard,
 )
-from .gns_cutlass_ampere import CutlassBackend, cutlass_is_installed
+from .gns_cutlass_ampere import CutlassBackend
 
 
 class GramNewtonSchulzAmpere(GramNewtonSchulz):
@@ -34,7 +34,7 @@ class GramNewtonSchulzAmpere(GramNewtonSchulz):
             ns_use_kernels=False,
             ns_coefficients=ns_coefficients,
             use_gram_newton_schulz=True,
-            gram_newton_schulz_reset_iterations=(gram_newton_schulz_reset_iterations),
+            gram_newton_schulz_reset_iterations=gram_newton_schulz_reset_iterations,
             compile_kwargs=compile_kwargs,
         )
         backend = CutlassBackend(fallback=_TORCH_BACKEND)
@@ -59,6 +59,4 @@ class GramNewtonSchulzAmpere(GramNewtonSchulz):
             raise ValueError("GramNewtonSchulzAmpere requires a CUDA tensor")
         if torch.cuda.get_device_capability(X.device)[0] != 8:
             raise ValueError("GramNewtonSchulzAmpere requires an SM8X GPU")
-        if not cutlass_is_installed():
-            raise RuntimeError("GramNewtonSchulzAmpere requires nvidia-cutlass-dsl")
         return super().__call__(X)

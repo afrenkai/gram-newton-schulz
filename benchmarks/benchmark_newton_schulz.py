@@ -15,7 +15,7 @@ import torch
 from triton.testing import do_bench
 
 from gram_newton_schulz import StandardNewtonSchulz, GramNewtonSchulz, YOU_COEFFICIENTS
-from gram_newton_schulz.ampere import GramNewtonSchulzAmpere, cutlass_is_installed
+from gram_newton_schulz.ampere import GramNewtonSchulzAmpere
 
 
 def benchmark_ns_variant(callable_fn, X, warmup=5, repeats=30, desc=""):
@@ -94,7 +94,7 @@ def main():
     print("=" * 80)
 
     can_use_kernels = compute_capability >= 90
-    can_use_ampere = capability[0] == 8 and cutlass_is_installed()
+    can_use_ampere = capability[0] == 8
 
     if can_use_kernels:
         print("Custom kernels available (H100/B200)")
@@ -102,8 +102,6 @@ def main():
         print("Ampere CUTLASS kernels available")
     else:
         print(f"Custom kernels not available (requires SM90+, found SM{compute_capability})")
-        if capability[0] == 8:
-            print("Install the nvidia-cutlass-dsl dependency to enable Ampere kernels")
         print("Will only benchmark PyTorch implementations")
 
     torch_dtype = torch.bfloat16
