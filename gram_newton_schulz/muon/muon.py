@@ -24,7 +24,7 @@ class Muon(Optimizer):
     """
     Fast Muon implementation for Gram Newton-Schulz and standard Newton-Schulz.
     Supports:
-        - Custom Hopper and Blackwell Symmetric GEMM and standard GEMM kernels for accelerated Newton-Schulz
+        - Custom Ampere, Hopper, and Blackwell GEMM kernels for accelerated Newton-Schulz
         - Auxiliary scalar optimizer for non-Muon weight updates, supporting LR scheduling.
         - Custom NS coefficients, with default POLAR_EXPRESS_COEFFICIENTS from newton-schulz/coefficients.py
         - Custom weight splitting logic via lambda functions during preprocessing before Newton-Schulz
@@ -66,7 +66,7 @@ class Muon(Optimizer):
             matrices of the same shape are processed in one call).
             (default: None)
         ns_epsilon: Epsilon for Frobenius normalization before orthogonalization (default: 1e-7)
-        ns_use_kernels: Use custom CUDA kernels if available (requires compute capability 9.0+) (default: True)
+        ns_use_kernels: Use custom CUDA kernels if available (requires compute capability 8.0+) (default: True)
         gram_newton_schulz_num_restarts: Number of restarts for Gram Newton-Schulz. Restart positions are automatically tuned during initialization. Ignored if gram_newton_schulz_restart_iterations is provided. (default: 1)
         gram_newton_schulz_restart_iterations: Manual restart positions for Gram Newton-Schulz. If "2" is an entry, the user wants a restart after the 2nd iteration. If provided, auto-tuning is skipped. (default: None)
         scalar_optimizer: Optional secondary optimizer for non-matrix parameters (default: None)
@@ -158,8 +158,8 @@ class Muon(Optimizer):
             capability = torch.cuda.get_device_capability(device)
             compute_capability = capability[0] * 10 + capability[1]
 
-            if compute_capability < 90:
-                print(f"Warning: Custom kernels require compute capability 9.0+ (H100/B200), but found {capability[0]}.{capability[1]}. "
+            if compute_capability < 80:
+                print(f"Warning: Custom kernels require compute capability 8.0+, but found {capability[0]}.{capability[1]}. "
                       f"Falling back to PyTorch operations (ns_use_kernels=False).")
                 self.ns_use_kernels = False
             else:
