@@ -26,18 +26,16 @@ class GramNewtonSchulzAmpere(GramNewtonSchulz):
     ) -> None:
         """Initialize the Ampere Gram Newton-Schulz orthogonalizer.
 
-        ``compile_kwargs`` must remain ``None`` because the FlashInfer TVM-FFI
-        calls have not been registered as PyTorch custom operators.
+        ``compile_kwargs`` are forwarded to the internal PyTorch closures. The
+        CuTe DSL launches remain registered custom-operator boundaries.
         """
-        if compile_kwargs is not None:
-            raise ValueError("GramNewtonSchulzAmpere does not support torch.compile")
         super().__init__(
             ns_epsilon=ns_epsilon,
             ns_use_kernels=False,
             ns_coefficients=ns_coefficients,
             use_gram_newton_schulz=True,
             gram_newton_schulz_reset_iterations=(gram_newton_schulz_reset_iterations),
-            compile_kwargs=None,
+            compile_kwargs=compile_kwargs,
         )
         backend = CutlassBackend(fallback=_TORCH_BACKEND)
         self._gram_kernel = _make_compiled_gram(
@@ -45,13 +43,13 @@ class GramNewtonSchulzAmpere(GramNewtonSchulz):
             self.ns_coefficients,
             self.gram_newton_schulz_reset_iterations,
             ns_epsilon,
-            None,
+            compile_kwargs,
         )
         self._standard_kernel = _make_compiled_standard(
             backend,
             self.ns_coefficients,
             ns_epsilon,
-            None,
+            compile_kwargs,
         )
         self._kernel_backend = backend
         self.ns_use_kernels = True
@@ -62,7 +60,5 @@ class GramNewtonSchulzAmpere(GramNewtonSchulz):
         if torch.cuda.get_device_capability(X.device)[0] != 8:
             raise ValueError("GramNewtonSchulzAmpere requires an SM8X GPU")
         if not cutlass_is_installed():
-            raise RuntimeError(
-                "GramNewtonSchulzAmpere requires the 'cutlass' optional dependency"
-            )
+            raise RuntimeError("GramNewtonSchulzAmpere requires nvidia-cutlass-dsl")
         return super().__call__(X)

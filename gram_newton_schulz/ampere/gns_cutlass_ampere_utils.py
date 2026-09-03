@@ -4,35 +4,20 @@ import torch
 from torch import Tensor
 
 
-class FlashInferJitSpec(Protocol):
-    def build_and_load(self) -> object: ...
-
-
-class CutlassJitModule(Protocol):
-    def cutlass_baddbmm(
+class CompiledBmmKernel(Protocol):
+    def __call__(
         self,
-        accumulator: Tensor,
         left: Tensor,
         right: Tensor,
         output: Tensor,
+        accumulator: Tensor,
         alpha: float,
         beta: float,
-        tactic: int,
-        right_column_major: bool,
     ) -> None: ...
 
-    def cutlass_symmetric_baddbmm(
-        self,
-        accumulator: Tensor,
-        left: Tensor,
-        right: Tensor,
-        output: Tensor,
-        alpha: float,
-        beta: float,
-        left_column_major: bool,
-        right_column_major: bool,
-        mirror_tile_size: int,
-    ) -> None: ...
+
+class CompiledMirrorKernel(Protocol):
+    def __call__(self, output: Tensor) -> None: ...
 
 
 class MatrixBackend(Protocol):

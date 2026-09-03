@@ -1,52 +1,31 @@
-from collections.abc import Callable
 from functools import cache
-from hashlib import sha256
-from importlib.resources import as_file, files
 from typing import cast
 
+import cutlass
 import torch
+from cutlass import cute
+from cutlass.cute.runtime import (
+    make_fake_compact_tensor,
+    make_fake_stream,
+    make_fake_tensor,
+)
 from torch import Tensor
 
+from .gns_cutlass_ampere_kernel import AmpereTensorOpGemm, MirrorLowerTriangle
 from .gns_cutlass_ampere_utils import (
-    CutlassJitModule,
-    FlashInferJitSpec,
+    CompiledBmmKernel,
+    CompiledMirrorKernel,
     MatrixBackend,
     cutlass_supports_problem,
 )
 
-try:
-    from flashinfer.jit import gen_jit_spec  # ty: ignore[unresolved-import]
-except ImportError:
-    gen_jit_spec: Callable[..., object] | None = None
 
-
-@cache
-def load_cutlass_module() -> CutlassJitModule:
-    if gen_jit_spec is None:
-        raise RuntimeError(
-            "The CUTLASS backend requires flashinfer-python with JIT support"
-        )
-
-    source = files(__package__).joinpath("gns_cutlass_ampere.cu")
-    source_digest = sha256(source.read_bytes()).hexdigest()[:12]
-    with as_file(source) as source_path:
-        specification = cast(
-            FlashInferJitSpec,
-            gen_jit_spec(
-                f"gram_newton_schulz_ampere_sm80_{source_digest}",
-                (source_path,),
-                extra_cuda_cflags=[
-                    "-gencode=arch=compute_80,code=sm_80",
-                    "-gencode=arch=compute_80,code=compute_80",
-                ],
-            ),
-        )
-        module = specification.build_and_load()
-    return cast(CutlassJitModule, module)
-
-
-def cutlass_is_installed() -> bool:
-    return gen_jit_spec is not None
+def cutlass_dtype(dtype: torch.dtype) -> type[cutlass.Numeric]:
+    if dtype == torch.float16:
+        return cutlass.Float16
+    if dtype == torch.bfloat16:
+        return cutlass.BFloat16
+    raise TypeError("Ampere CuTe GEMM requires float16 or bfloat16 tensors")
 
 
 def select_cutlass_tactic(output_rows: int) -> int:
@@ -57,7 +36,179 @@ def select_cutlass_tactic(output_rows: int) -> int:
     return 0
 
 
-def cutlass_baddbmm(
+def cutlass_tactic_config(
+    tactic: int,
+) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    if tactic == 0:
+        return (128, 128, 32), (2, 2, 1)
+    if tactic == 1:
+        return (64, 64, 32), (2, 2, 1)
+    if tactic == 2:
+        return (64, 128, 32), (2, 2, 1)
+    raise ValueError(f"CUTLASS tactic must be 0, 1, or 2, got {tactic}")
+
+
+def cutlass_compile_options(device_capability: tuple[int, int]) -> str:
+    major, minor = device_capability
+    return f"--enable-tvm-ffi --gpu-arch sm_{major}{minor}"
+
+
+@cache
+def compile_cutlass_bmm(
+    dtype: torch.dtype,
+    left_column_major: bool,
+    right_column_major: bool,
+    tactic: int,
+    symmetric: bool,
+    read_accumulator: bool,
+    device_capability: tuple[int, int],
+) -> CompiledBmmKernel:
+    if device_capability[0] != 8:
+        raise ValueError("Ampere CuTe GEMM requires an SM8X GPU")
+
+    element_type = cutlass_dtype(dtype)
+    output_rows = cute.sym_int(divisibility=8) if left_column_major else cute.sym_int()
+    output_columns = cute.sym_int(divisibility=8)
+    inner_dimension = cute.sym_int(divisibility=8)
+    batch_size = cute.sym_int()
+    left_leading_dimension = 0 if left_column_major else 1
+    right_leading_dimension = 1 if right_column_major else 0
+    left_stride = tuple(
+        1 if dimension == left_leading_dimension else cute.sym_int64(divisibility=8)
+        for dimension in range(3)
+    )
+    right_stride = tuple(
+        1 if dimension == right_leading_dimension else cute.sym_int64(divisibility=8)
+        for dimension in range(3)
+    )
+
+    left = make_fake_tensor(
+        element_type,
+        (output_rows, inner_dimension, batch_size),
+        stride=left_stride,
+        assumed_align=16,
+    )
+    right = make_fake_tensor(
+        element_type,
+        (output_columns, inner_dimension, batch_size),
+        stride=right_stride,
+        assumed_align=16,
+    )
+    output = make_fake_compact_tensor(
+        element_type,
+        (output_rows, output_columns, batch_size),
+        stride_order=(1, 0, 2),
+        assumed_align=16,
+    )
+    accumulator = make_fake_compact_tensor(
+        element_type,
+        (output_rows, output_columns, batch_size),
+        stride_order=(1, 0, 2),
+        assumed_align=16,
+    )
+    tile_shape, atom_layout = cutlass_tactic_config(tactic)
+    operation = AmpereTensorOpGemm(
+        element_type,
+        element_type,
+        cutlass.Float32,
+        tile_shape,
+        atom_layout,
+        symmetric,
+    )
+    stream = make_fake_stream(use_tvm_ffi_env_stream=True)
+    return cast(
+        CompiledBmmKernel,
+        cute.compile(
+            operation,
+            left,
+            right,
+            output,
+            accumulator,
+            cutlass.Float32(1.0),
+            cutlass.Float32(1.0),
+            read_accumulator,
+            stream,
+            options=cutlass_compile_options(device_capability),
+        ),
+    )
+
+
+@cache
+def compile_mirror_kernel(
+    dtype: torch.dtype,
+    device_capability: tuple[int, int],
+) -> CompiledMirrorKernel:
+    if device_capability[0] != 8:
+        raise ValueError("Ampere CuTe mirror requires an SM8X GPU")
+
+    matrix_size = cute.sym_int(divisibility=8)
+    batch_size = cute.sym_int()
+    output = make_fake_compact_tensor(
+        cutlass_dtype(dtype),
+        (batch_size, matrix_size, matrix_size),
+        stride_order=(2, 1, 0),
+        assumed_align=16,
+    )
+    stream = make_fake_stream(use_tvm_ffi_env_stream=True)
+    return cast(
+        CompiledMirrorKernel,
+        cute.compile(
+            MirrorLowerTriangle(),
+            output,
+            stream,
+            options=cutlass_compile_options(device_capability),
+        ),
+    )
+
+
+def run_cutlass_bmm(
+    left: Tensor,
+    right: Tensor,
+    accumulator: Tensor,
+    output: Tensor,
+    alpha: float,
+    beta: float,
+    tactic: int,
+    *,
+    symmetric: bool,
+) -> None:
+    device_capability = torch.cuda.get_device_capability(left.device)
+    with torch.cuda.device(left.device):
+        compiled_kernel = compile_cutlass_bmm(
+            left.dtype,
+            not left.is_contiguous(),
+            not right.is_contiguous(),
+            tactic,
+            symmetric,
+            beta != 0.0,
+            device_capability,
+        )
+        compiled_kernel(
+            left.permute(1, 2, 0),
+            right.permute(2, 1, 0),
+            output.permute(1, 2, 0),
+            accumulator.permute(1, 2, 0),
+            alpha,
+            beta,
+        )
+
+
+def mirror_symmetric_output(output: Tensor) -> None:
+    device_capability = torch.cuda.get_device_capability(output.device)
+    with torch.cuda.device(output.device):
+        compile_mirror_kernel(output.dtype, device_capability)(output)
+
+
+def cutlass_is_installed() -> bool:
+    return True
+
+
+@torch.library.custom_op(
+    "gram_newton_schulz::cutlass_baddbmm",
+    mutates_args=(),
+    device_types="cuda",
+)
+def cutlass_baddbmm_cuda(
     accumulator: Tensor,
     left: Tensor,
     right: Tensor,
@@ -73,26 +224,109 @@ def cutlass_baddbmm(
         symmetric=False,
     ):
         raise ValueError(
-            "Tensor shape, layout, dtype, or device is unsupported by SM8X CUTLASS"
+            "Tensor shape, layout, dtype, or device is unsupported by SM8X CuTe"
         )
     selected_tactic = (
         select_cutlass_tactic(left.shape[-2]) if tactic is None else tactic
     )
-    if selected_tactic not in {0, 1, 2}:
-        raise ValueError(f"CUTLASS tactic must be 0, 1, or 2, got {selected_tactic}")
-    output = torch.empty_like(accumulator)
-    right_column_major = not right.is_contiguous()
-    load_cutlass_module().cutlass_baddbmm(
-        accumulator,
+    cutlass_tactic_config(selected_tactic)
+    output = torch.empty_like(accumulator, memory_format=torch.contiguous_format)
+    run_cutlass_bmm(
         left,
         right,
+        accumulator,
         output,
         alpha,
         beta,
         selected_tactic,
-        right_column_major,
+        symmetric=False,
     )
     return output
+
+
+@cutlass_baddbmm_cuda.register_fake
+def cutlass_baddbmm_fake(
+    accumulator: Tensor,
+    left: Tensor,
+    right: Tensor,
+    *,
+    alpha: float = 1.0,
+    beta: float = 1.0,
+    tactic: int | None = None,
+) -> Tensor:
+    return torch.empty_like(accumulator, memory_format=torch.contiguous_format)
+
+
+@torch.library.custom_op(
+    "gram_newton_schulz::cutlass_symmetric_baddbmm",
+    mutates_args=(),
+    device_types="cuda",
+)
+def cutlass_symmetric_baddbmm_cuda(
+    accumulator: Tensor,
+    left: Tensor,
+    right: Tensor,
+    *,
+    alpha: float = 1.0,
+    beta: float = 1.0,
+) -> Tensor:
+    if not cutlass_supports_problem(
+        accumulator,
+        left,
+        right,
+        symmetric=True,
+    ):
+        raise ValueError(
+            "Tensor shape, layout, dtype, or device is unsupported by symmetric "
+            "SM8X CuTe"
+        )
+    output = torch.empty_like(accumulator, memory_format=torch.contiguous_format)
+    run_cutlass_bmm(
+        left,
+        right,
+        accumulator,
+        output,
+        alpha,
+        beta,
+        tactic=0,
+        symmetric=True,
+    )
+    mirror_symmetric_output(output)
+    return output
+
+
+@cutlass_symmetric_baddbmm_cuda.register_fake
+def cutlass_symmetric_baddbmm_fake(
+    accumulator: Tensor,
+    left: Tensor,
+    right: Tensor,
+    *,
+    alpha: float = 1.0,
+    beta: float = 1.0,
+) -> Tensor:
+    return torch.empty_like(accumulator, memory_format=torch.contiguous_format)
+
+
+def cutlass_baddbmm(
+    accumulator: Tensor,
+    left: Tensor,
+    right: Tensor,
+    *,
+    alpha: float = 1.0,
+    beta: float = 1.0,
+    tactic: int | None = None,
+) -> Tensor:
+    return cast(
+        Tensor,
+        torch.ops.gram_newton_schulz.cutlass_baddbmm.default(
+            accumulator,
+            left,
+            right,
+            alpha=alpha,
+            beta=beta,
+            tactic=tactic,
+        ),
+    )
 
 
 def cutlass_bmm(
@@ -121,35 +355,16 @@ def cutlass_symmetric_baddbmm(
     alpha: float = 1.0,
     beta: float = 1.0,
 ) -> Tensor:
-    if not cutlass_supports_problem(
-        accumulator,
-        left,
-        right,
-        symmetric=True,
-    ):
-        raise ValueError(
-            "Tensor shape, layout, dtype, or device is unsupported by symmetric "
-            "SM8X CUTLASS"
-        )
-    output = torch.empty_like(accumulator)
-    mirror_tile_size = (
-        64
-        if left.shape[0] >= 8
-        and torch.cuda.get_device_capability(left.device) == (8, 0)
-        else 32
+    return cast(
+        Tensor,
+        torch.ops.gram_newton_schulz.cutlass_symmetric_baddbmm.default(
+            accumulator,
+            left,
+            right,
+            alpha=alpha,
+            beta=beta,
+        ),
     )
-    load_cutlass_module().cutlass_symmetric_baddbmm(
-        accumulator,
-        left,
-        right,
-        output,
-        alpha,
-        beta,
-        not left.is_contiguous(),
-        not right.is_contiguous(),
-        mirror_tile_size,
-    )
-    return output
 
 
 def cutlass_symmetric_bmm(left: Tensor, right: Tensor) -> Tensor:

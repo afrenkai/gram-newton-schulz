@@ -107,10 +107,7 @@ def main():
     else:
         print(f"Custom kernels not available for SM{compute_capability}")
         if capability[0] == 8:
-            print(
-                "Install the optional dependency with: "
-                "pip install '.[cutlass]' --no-build-isolation"
-            )
+            print("Install the nvidia-cutlass-dsl dependency to enable Ampere kernels")
         print("Will only benchmark PyTorch implementations")
 
     torch_dtype = torch.bfloat16

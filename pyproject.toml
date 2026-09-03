@@ -19,18 +19,19 @@ dependencies = [
     "torch>=2.7.1",
     "quack-kernels==0.5.0",
     "nvidia-cutlass-dsl==4.5.2",
+    "apache-tvm-ffi>=0.1.6,<0.2",
+    "torch-c-dlpack-ext",
 ]
 
 [project.optional-dependencies]
 high-precision-autotune = ["flamp"]
-cutlass = ["flashinfer-python==0.6.13; sys_platform == 'linux'"]
 
 [project.urls]
 Homepage = "https://github.com/Dao-AILab/gram-newton-schulz"
 Repository = "https://github.com/Dao-AILab/gram-newton-schulz"
 
 [tool.setuptools]
-include-package-data = true
+include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -38,6 +39,3 @@ include = ["gram_newton_schulz*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "gram_newton_schulz.__version__"}
-
-[tool.setuptools.package-data]
-"*" = ["**/*.cu", "**/*.cpp", "**/*.cuh", "**/*.h", "**/*.pyx"]

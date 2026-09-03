@@ -50,25 +50,18 @@ Requirements:
 - PyTorch 2.7.1+
 - CUDA 12.9+
 
-Install PyTorch first, then install from PyPI with `pip install gram-newton-schulz --no-build-isolation` or from source:
+Install from PyPI with `pip install gram-newton-schulz` or from source:
 
 ```bash
-pip install . --no-build-isolation
+pip install .
 ```
-
-`--no-build-isolation` is required so that pip uses your existing CUDA-enabled PyTorch instead of installing torch-cpu in an isolated build environment.
 
 This will install:
 
 - gram-newton-schulz (this package)
 - nvidia-cutlass-dsl 4.5.2
 - quack-kernels 0.5.0
-
-On Ampere, install the optional CUTLASS runtime as well:
-
-```bash
-pip install 'gram-newton-schulz[cutlass]' --no-build-isolation
-```
+- Apache TVM FFI and its PyTorch DLPack bridge
 
 ## Usage
 
@@ -98,7 +91,7 @@ For 5 steps of Newton-Schulz, we recommend `num-restarts = 1` for maximum speed 
 
 ### Ampere
 
-Use the Ampere implementation on SM8X GPUs after installing the `cutlass` extra:
+Use the hardware-targeted Ampere implementation on SM8X GPUs:
 
 ```python
 from gram_newton_schulz import POLAR_EXPRESS_COEFFICIENTS
@@ -107,14 +100,18 @@ from gram_newton_schulz.ampere import GramNewtonSchulzAmpere
 ampere_gram_NS = GramNewtonSchulzAmpere(
     ns_coefficients=POLAR_EXPRESS_COEFFICIENTS,
     gram_newton_schulz_reset_iterations=[2],
+    compile_kwargs={"fullgraph": True, "mode": "reduce-overhead"},
 )
 result = ampere_gram_NS(X)
 ```
 
-The Ampere backend uses CUTLASS for specific square and symmetric products. It
-keeps rectangular products on PyTorch/cuBLAS.
-
-torch.compile is WIP
+The Ampere backend JIT-compiles selected square and symmetric products with the
+Python CUTLASS CuTe DSL. It keeps rectangular products on PyTorch/cuBLAS.
+Selected CuTe products must meet the backend's alignment and layout
+requirements; kernel errors are not silently routed to PyTorch. The launches
+are registered PyTorch custom operators, so the surrounding Newton-Schulz
+closures support `torch.compile`. No vendored CUTLASS headers or CUDA extension
+build are required.
 
 
 ### Muon
