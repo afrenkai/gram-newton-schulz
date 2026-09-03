@@ -31,7 +31,7 @@ Homepage = "https://github.com/Dao-AILab/gram-newton-schulz"
 Repository = "https://github.com/Dao-AILab/gram-newton-schulz"
 
 [tool.setuptools]
-include-package-data = false
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -39,3 +39,6 @@ include = ["gram_newton_schulz*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "gram_newton_schulz.__version__"}
+
+[tool.setuptools.package-data]
+"*" = ["**/*.cu", "**/*.cpp", "**/*.cuh", "**/*.h", "**/*.pyx"]

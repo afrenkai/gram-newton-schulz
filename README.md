@@ -46,15 +46,17 @@ Instead of iterating on the expensive $X \in \mathbb{R}^{n \times m}$ matrix, Gr
 
 Requirements:
 
-- NVIDIA Ampere (SM8X), Hopper (H100), or Blackwell (B200/B300) GPU
+- NVIDIA Ampere (SM8X), Hopper (H100) or Blackwell (B200/B300) GPU
 - PyTorch 2.7.1+
 - CUDA 12.9+
 
-Install from PyPI with `pip install gram-newton-schulz` or from source:
+Install PyTorch first, then install from PyPI with `pip install gram-newton-schulz --no-build-isolation` or from source:
 
 ```bash
-pip install .
+pip install . --no-build-isolation
 ```
+
+`--no-build-isolation` is required so that pip uses your existing CUDA-enabled PyTorch instead of installing torch-cpu in an isolated build environment.
 
 This will install:
 
@@ -104,15 +106,6 @@ ampere_gram_NS = GramNewtonSchulzAmpere(
 )
 result = ampere_gram_NS(X)
 ```
-
-The Ampere backend JIT-compiles selected square and symmetric products with the
-Python CUTLASS CuTe DSL. It keeps rectangular products on PyTorch/cuBLAS.
-Selected CuTe products must meet the backend's alignment and layout
-requirements; kernel errors are not silently routed to PyTorch. The launches
-are registered PyTorch custom operators, so the surrounding Newton-Schulz
-closures support `torch.compile`. No vendored CUTLASS headers or CUDA extension
-build are required.
-
 
 ### Muon
 

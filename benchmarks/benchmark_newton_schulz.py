@@ -14,11 +14,7 @@ from datetime import datetime
 import torch
 from triton.testing import do_bench
 
-from gram_newton_schulz import (
-    YOU_COEFFICIENTS,
-    GramNewtonSchulz,
-    StandardNewtonSchulz,
-)
+from gram_newton_schulz import StandardNewtonSchulz, GramNewtonSchulz, YOU_COEFFICIENTS
 from gram_newton_schulz.ampere import GramNewtonSchulzAmpere, cutlass_is_installed
 
 
@@ -105,7 +101,7 @@ def main():
     elif can_use_ampere:
         print("Ampere CUTLASS kernels available")
     else:
-        print(f"Custom kernels not available for SM{compute_capability}")
+        print(f"Custom kernels not available (requires SM90+, found SM{compute_capability})")
         if capability[0] == 8:
             print("Install the nvidia-cutlass-dsl dependency to enable Ampere kernels")
         print("Will only benchmark PyTorch implementations")
