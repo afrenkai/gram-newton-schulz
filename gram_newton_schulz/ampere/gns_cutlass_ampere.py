@@ -203,8 +203,12 @@ def cutlass_baddbmm_cuda(
         right,
         symmetric=False,
     ):
-        raise ValueError(
-            "Tensor shape, layout, dtype, or device is unsupported by SM8X CuTe"
+        return torch.baddbmm(
+            accumulator,
+            left,
+            right,
+            alpha=alpha,
+            beta=beta,
         )
     output = torch.empty_like(accumulator, memory_format=torch.contiguous_format)
     run_cutlass_bmm(
@@ -250,9 +254,12 @@ def cutlass_symmetric_baddbmm_cuda(
         right,
         symmetric=True,
     ):
-        raise ValueError(
-            "Tensor shape, layout, dtype, or device is unsupported by symmetric "
-            "SM8X CuTe"
+        return torch.baddbmm(
+            accumulator,
+            left,
+            right,
+            alpha=alpha,
+            beta=beta,
         )
     output = torch.empty_like(accumulator, memory_format=torch.contiguous_format)
     run_cutlass_bmm(
