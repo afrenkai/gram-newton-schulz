@@ -16,6 +16,13 @@ _TORCH_BACKEND = SimpleNamespace(
 
 
 def _make_kernel_backend():
+    if torch.cuda.is_available():
+        device = torch.cuda.current_device()
+        if torch.cuda.get_device_capability(device)[0] == 8:
+            from .ampere.gns_cutlass_ampere import CutlassBackend
+
+            return CutlassBackend(fallback=_TORCH_BACKEND)
+
     from quack.gemm_interface import gemm_symmetric, gemm, gemm_add
     return SimpleNamespace(
         sym_mm=gemm_symmetric,
