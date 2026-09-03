@@ -190,7 +190,7 @@ def main():
             gram_newton_schulz_reset_iterations=[2],
         )
 
-        gram_ampere(X)
+        _ = gram_ampere(X)
         torch.cuda.synchronize()
         time.sleep(1.0)
 
@@ -277,7 +277,7 @@ def main():
             torch.cuda.synchronize()
 
             if can_use_ampere:
-                gram_ampere(X)
+                _ = gram_ampere(X)
                 torch.cuda.synchronize()
 
             if can_use_kernels:
