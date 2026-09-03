@@ -523,17 +523,14 @@ class AmpereTensorOpGemm:
             tCrD = cute.make_fragment_like(tCrC, self.c_dtype)
             if cutlass.const_expr(read_accumulator):
                 tCgAccumulator = thr_mma.partition_C(gC)
-                tCrAccumulator = cute.make_fragment_like(tCrC, self.c_dtype)
-                tCrAccumulator.fill(0.0)
+                tCrD.fill(0.0)
                 for element in cutlass.range(
-                    cute.size(tCrAccumulator),
+                    cute.size(tCrD),
                     unroll_full=True,
                 ):
                     if predD[element]:
-                        tCrAccumulator[element] = tCgAccumulator[element]
-                tCrD[None] = (alpha * tCrC.load() + beta * tCrAccumulator.load()).to(
-                    self.c_dtype
-                )
+                        tCrD[element] = tCgAccumulator[element]
+                tCrD[None] = (alpha * tCrC.load() + beta * tCrD.load()).to(self.c_dtype)
             else:
                 tCrD[None] = (alpha * tCrC.load()).to(self.c_dtype)
 
