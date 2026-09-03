@@ -701,10 +701,37 @@ def mirror_lower_triangle_kernel(output: cute.Tensor) -> None:
     thread_x = thread_indices[0]
     thread_y = thread_indices[1]
     block_x, block_y, batch_index = cute.arch.block_idx()
-    row = block_y * 16 + thread_y
-    column = block_x * 16 + thread_x
-    if row < output.shape[1] and column < output.shape[2] and row < column:
-        output[batch_index, row, column] = output[batch_index, column, row]
+    shared_layout = cute.make_layout((32, 33), stride=(33, 1))
+    smem = cutlass_utils.SmemAllocator()
+    shared_tile = smem.allocate_tensor(
+        output.element_type,
+        shared_layout,
+        byte_alignment=16,
+    )
+
+    if block_y <= block_x:
+        source_column = block_y * 32 + thread_x
+        for row_offset in range(0, 32, 8):
+            source_row = block_x * 32 + thread_y + row_offset
+            if source_row < output.shape[1] and source_column < output.shape[2]:
+                shared_tile[thread_y + row_offset, thread_x] = output[
+                    batch_index,
+                    source_row,
+                    source_column,
+                ]
+        cute.arch.sync_threads()
+
+        destination_column = block_x * 32 + thread_x
+        for row_offset in range(0, 32, 8):
+            destination_row = block_y * 32 + thread_y + row_offset
+            if (
+                destination_row < output.shape[1]
+                and destination_column < output.shape[2]
+                and destination_row < destination_column
+            ):
+                output[batch_index, destination_row, destination_column] = shared_tile[
+                    thread_x, thread_y + row_offset
+                ]
 
 
 class MirrorLowerTriangle:
@@ -712,10 +739,10 @@ class MirrorLowerTriangle:
     def __call__(self, output: cute.Tensor, stream: cuda.CUstream) -> None:
         mirror_lower_triangle_kernel(output).launch(
             grid=(
-                cute.ceil_div(output.shape[2], 16),
-                cute.ceil_div(output.shape[1], 16),
+                cute.ceil_div(output.shape[2], 32),
+                cute.ceil_div(output.shape[1], 32),
                 output.shape[0],
             ),
-            block=(16, 16, 1),
+            block=(32, 8, 1),
             stream=stream,
         )
