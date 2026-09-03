@@ -63,7 +63,7 @@ This will install:
 - gram-newton-schulz (this package)
 - nvidia-cutlass-dsl 4.5.2
 - quack-kernels 0.5.0
-- Apache TVM FFI and its PyTorch DLPack bridge
+- Apache TVM FFI
 
 ## Usage
 
