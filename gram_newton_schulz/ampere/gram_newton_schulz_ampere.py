@@ -4,6 +4,7 @@ from torch import Tensor
 from ..gram_newton_schulz import (
     _TORCH_BACKEND,
     GramNewtonSchulz,
+    StandardNewtonSchulz,
     _make_compiled_gram,
     _make_compiled_standard,
 )
@@ -59,4 +60,40 @@ class GramNewtonSchulzAmpere(GramNewtonSchulz):
             raise ValueError("GramNewtonSchulzAmpere requires a CUDA tensor")
         if torch.cuda.get_device_capability(X.device)[0] != 8:
             raise ValueError("GramNewtonSchulzAmpere requires an SM8X GPU")
+        return super().__call__(X)
+
+
+class StandardNewtonSchulzAmpere(StandardNewtonSchulz):
+    """Standard Newton-Schulz using CUTLASS kernels on NVIDIA Ampere GPUs.
+
+    Rectangular products use the same PyTorch backend as the base class.
+    """
+
+    def __init__(
+        self,
+        ns_epsilon: float = 1e-7,
+        ns_coefficients: list[list[float]] | None = None,
+        compile_kwargs: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(
+            ns_epsilon=ns_epsilon,
+            ns_use_kernels=False,
+            ns_coefficients=ns_coefficients,
+            compile_kwargs=compile_kwargs,
+        )
+        backend = CutlassBackend(fallback=_TORCH_BACKEND)
+        self._standard_kernel = _make_compiled_standard(
+            backend,
+            self.ns_coefficients,
+            ns_epsilon,
+            compile_kwargs,
+        )
+        self._kernel_backend = backend
+        self.ns_use_kernels = True
+
+    def __call__(self, X: Tensor) -> Tensor:
+        if not X.is_cuda:
+            raise ValueError("StandardNewtonSchulzAmpere requires a CUDA tensor")
+        if torch.cuda.get_device_capability(X.device)[0] != 8:
+            raise ValueError("StandardNewtonSchulzAmpere requires an SM8X GPU")
         return super().__call__(X)
